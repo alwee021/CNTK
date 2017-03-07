@@ -229,18 +229,35 @@ def test_op_slice(input_data, slice_params, expected_result, device_id, precisio
 
 
 SLICE_OVERLOAD_TEST_CASES_STATIC = [
-    # (input_data, slices, axis, expected_result)
+    # (input_data, slices, expected_result)
 
     ([[1, 2, 3], [-4, 5, 6]],
         # Selecting from row 1 the column 2
         (1, 2),
         [[6]]),
 
-    # slicing with a list of indices
+    # slicing with one list of indices
+    ([[1, 2, 3], [-4, 5, 6]],
+        # Selecting from both rows columns 1 and 2
+        ([0, 1],),
+        [[1, 2, 3], [-4, 5, 6]]),
+
+    # slicing with one list of indices
     ([[1, 2, 3], [-4, 5, 6]],
         # Selecting from both rows columns 1 and 2
         (0, [1, 2]),
         [[2, 3]]),
+
+    ([[1, 2, 3], [-4, 5, 6]],
+        # Selecting from both rows column 2
+        ([0, 1], 2),
+        [[3], [6]]),
+
+    # slicing with two lists of indices -> error
+    ([[1, 2, 3], [-4, 5, 6]],
+        # Selecting from both rows columns 1 and 2
+        ([0, 1], [1, 2]),
+        ValueError),
 ]
 
 
@@ -265,9 +282,6 @@ def test_op_slice_overload(input_data, slices, expected_result,
 
     value = AA(input_data, dtype=dtype)
 
-    expected_forward = [AA([expected_result], dtype=dtype)]
-    expected_backward = [[grad_slice(input_data, slices)]]
-
     a = I(shape=value.shape,
           dtype=sanitize_dtype_cntk(dtype),
           needs_gradient=True,
@@ -275,16 +289,24 @@ def test_op_slice_overload(input_data, slices, expected_result,
 
     f = a+0
 
-    # create batch
-    value.shape = (1, 1) + value.shape
+    if expected_result == ValueError:
+        with pytest.raises(ValueError):
+            input_op = f[slices]
+    else:
+        input_op = f[slices]
 
-    input_op = f[slices]
+        expected_forward = [AA([expected_result], dtype=dtype)]
+        expected_backward = [[grad_slice(input_data, slices)]]
 
-    forward_input = {a: value}
-    expected_backward = {a: expected_backward}
-    unittest_helper(input_op,
-                    forward_input, expected_forward, expected_backward,
-                    device_id=device_id, precision=precision)
+        # create batch
+        value.shape = (1, 1) + value.shape
+
+
+        forward_input = {a: value}
+        expected_backward = {a: expected_backward}
+        unittest_helper(input_op,
+                        forward_input, expected_forward, expected_backward,
+                        device_id=device_id, precision=precision)
 
 
 SLICE_TEST_CASES_DYNAMIC = [
