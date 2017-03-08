@@ -9,7 +9,7 @@
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")")"
 
-PARSED_ARGS=$(getopt -o '' --long py-version:,anaconda-basepath: -n "$SCRIPT_NAME" -- "$@")
+PARSED_ARGS=$(getopt -o '' --long py-version:,anaconda-basepath:,pywheel-base-url: -n "$SCRIPT_NAME" -- "$@")
 
 [ $? != 0 ] && {
   echo Terminating...
@@ -19,6 +19,7 @@ PARSED_ARGS=$(getopt -o '' --long py-version:,anaconda-basepath: -n "$SCRIPT_NAM
 eval set -- "$PARSED_ARGS"
 PY_VERSION=35
 ANACONDA_PREFIX="$HOME/anaconda3"
+CNTK_WHEEL_BASE_URL=
 
 while true; do
   case "$1" in
@@ -36,6 +37,10 @@ while true; do
       ;;
     --anaconda-basepath)
       ANACONDA_PREFIX="$2"
+      shift 2
+      ;;
+    --pywheel-base-url) # intended for testing, not documented
+      CNTK_WHEEL_BASE_URL="$2"
       shift 2
       ;;
     --)
@@ -57,9 +62,7 @@ set -x -e -o pipefail
 # Go to the drop root
 cd "$SCRIPT_DIR/../../.."
 
-PYWHEEL_QUALIFIER=cp$PY_VERSION-cp${PY_VERSION}m
-[ $PY_VERSION = 27 ] && PYWHEEL_QUALIFIER+=u
-
+CNTK_VERSION_PATH="version.txt"
 CNTK_BIN_PATH="$PWD/cntk/bin"
 CNTK_LIB_PATH="$PWD/cntk/lib"
 CNTK_DEP_LIB_PATH="$PWD/cntk/dependencies/lib"
@@ -67,12 +70,12 @@ CNTK_EXAMPLES_PATH="$PWD/Examples"
 CNTK_TUTORIALS_PATH="$PWD/Tutorials"
 CNTK_BINARY="$CNTK_BIN_PATH/cntk"
 CNTK_PY_ENV_FILE="$SCRIPT_DIR/conda-linux-cntk-py$PY_VERSION-environment.yml"
-CNTK_WHEEL_PATH="cntk/python/cntk-2.0.beta12.0-$PYWHEEL_QUALIFIER-linux_x86_64.whl"
 
+test -f "$CNTK_VERSION_PATH" &&
 test -d "$CNTK_BIN_PATH" && test -d "$CNTK_LIB_PATH" && test -d "$CNTK_DEP_LIB_PATH" &&
 test -d "$CNTK_TUTORIALS_PATH" &&
 test -d "$CNTK_EXAMPLES_PATH" && test -x "$CNTK_BINARY" &&
-test -f "$CNTK_PY_ENV_FILE" && test -f "$CNTK_WHEEL_PATH" || {
+test -f "$CNTK_PY_ENV_FILE" || {
   echo Cannot find expected drop content. Please double-check that this is a
   echo CNTK binary drop for Linux. Go to https://github.com/Microsoft/CNTK/wiki
   echo for help.
@@ -110,6 +113,41 @@ if dpkg -s $PACKAGES 1>/dev/null 2>/dev/null; then
 else
   sudo apt-get update
   sudo apt-get install -y --no-install-recommends $PACKAGES
+fi
+
+#########################################
+# Check Python Wheel availability
+
+PYWHEEL_QUALIFIER=cp$PY_VERSION-cp${PY_VERSION}m
+[ $PY_VERSION = 27 ] && PYWHEEL_QUALIFIER+=u
+CNTK_WHEEL_NAME="cntk-2.0.beta12.0-$PYWHEEL_QUALIFIER-linux_x86_64.whl"
+CNTK_WHEEL_PATH="cntk/python/$CNTK_WHEEL_NAME"
+
+# Check online if there is no wheel locally
+if ! test -f "$CNTK_WHEEL_PATH"; then
+
+  if [[ $(cat "$CNTK_VERSION_PATH") =~ CNTK-([1-9].*)-Linux-64bit-(GPU|CPU-Only|GPU-1bit-SGD)\.tar\.gz ]]; then
+    TARGET_CONFIGURATION="${BASH_REMATCH[2]}"
+
+    CNTK_WHEEL_BASE_URL="${CNTK_WHEEL_BASE_URL:-https://cntk.ai/PythonWheel/$TARGET_CONFIGURATION}"
+    CNTK_WHEEL_URL="$CNTK_WHEEL_BASE_URL/$CNTK_WHEEL_NAME"
+
+    wget -q --spider "$CNTK_WHEEL_URL" || {
+      echo Python wheel not available locally and cannot reach
+      echo $CNTK_WHEEL_URL for Python wheel installation online.
+      echo Please double-check Internet connectivity.
+      echo Go to https://github.com/Microsoft/CNTK/wiki for help.
+      exit 1
+    }
+
+    CNTK_WHEEL_PATH="$CNTK_WHEEL_URL"
+
+  else
+    echo Python wheel not available locally and cannot determine CNTK build type from
+    echo version file. Go to https://github.com/Microsoft/CNTK/wiki for help.
+    exit 1
+  fi
+
 fi
 
 #########################################
